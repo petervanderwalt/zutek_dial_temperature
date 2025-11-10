@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Flasher</title>
+  <script
+    type="module"
+    src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+  ></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .flasher-container {
+      text-align: center;
+      border: 1px solid #ccc;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      margin-top: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="flasher-container">
+    <h1>Flasher</h1>
+    <p>Connect your Dial and click the button to flash the firmware.</p>
+    <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+  </div>
+</body>
+</html>
