@@ -1,4 +1,4 @@
-name: Build and Deploy ESP32-S3 Firmware
+name: Build and Deploy ESP32 Firmware
 
 on:
   push:
@@ -12,8 +12,6 @@ jobs:
       contents: read
       pages: write
       id-token: write
-
-    # Add this environment section
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -32,21 +30,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade platformio
 
-      - name: Build ESP32-S3 firmware
-        run: pio run -e m5stack-dial # Make sure 'esp32-s3-generic' matches your platformio.ini
+      - name: Build Firmware
+        # IMPORTANT: Change m5stack-dial to your actual PlatformIO environment
+        run: pio run -e m5stack-dial
 
-      - name: Create deployment files
-        run: |
-          # Assuming your index.html and manifest.json are in a folder named 'web'
-          # If they are in the root, just use 'cp index.html deploy/'
-          mkdir -p deploy
-          cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
-          cp web/index.html deploy/index.html
-          cp web/manifest.json deploy/manifest.json
+      - name: Add firmware to deploy directory
+        # This copies the compiled binary into your existing /deploy folder
+        run: cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
 
-      - name: Upload artifact
+      - name: Upload Artifact for Deployment
         uses: actions/upload-pages-artifact@v3
         with:
+          # This uploads the entire /deploy directory, now containing all three files
           path: 'deploy'
 
       - name: Deploy to GitHub Pages
