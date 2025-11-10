@@ -1,4 +1,4 @@
-name: Build and Deploy ESP32 Firmware
+name: Build and Deploy m5Stack Dial Firmware
 
 on:
   push:
@@ -31,17 +31,19 @@ jobs:
           pip install --upgrade platformio
 
       - name: Build Firmware
-        # IMPORTANT: Change m5stack-dial to your actual PlatformIO environment
+        # Make sure 'm5stack-dial' is your correct PlatformIO environment name
         run: pio run -e m5stack-dial
 
-      - name: Add firmware to deploy directory
-        # This copies the compiled binary into your existing /deploy folder
-        run: cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
+      - name: Copy all firmware parts to deploy directory
+        run: |
+          cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
+          cp .pio/build/m5stack-dial/partitions.bin deploy/partitions.bin
+          cp .pio/build/m5stack-dial/bootloader.bin deploy/bootloader.bin
+          cp .pio/build/m5stack-dial/otadata.bin deploy/otadata.bin
 
       - name: Upload Artifact for Deployment
         uses: actions/upload-pages-artifact@v3
         with:
-          # This uploads the entire /deploy directory, now containing all three files
           path: 'deploy'
 
       - name: Deploy to GitHub Pages
