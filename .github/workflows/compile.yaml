@@ -27,7 +27,7 @@ jobs:
           pip install --upgrade platformio
 
       - name: Build ESP32-S3 firmware
-        run: pio run -e esp32-s3-generic
+        run: pio run
 
       - name: Create deployment artifact
         run: |
