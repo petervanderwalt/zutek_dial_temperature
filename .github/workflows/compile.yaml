@@ -1,4 +1,4 @@
-name: Build and Deploy Dial Firmware
+name: Build and Deploy ESP32-S3 Firmware
 
 on:
   push:
@@ -14,10 +14,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
@@ -35,10 +35,10 @@ jobs:
           cp .pio/build/esp32-s3-generic/firmware.bin deploy/firmware.bin
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+        uses: actions/upload-pages-artifact@v3
         with:
           path: 'deploy'
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v1
+        uses: actions/deploy-pages@v4
