@@ -33,14 +33,14 @@ jobs:
           pip install --upgrade platformio
 
       - name: Build ESP32-S3 firmware
-        run: pio run -e esp32-s3-generic # Make sure 'esp32-s3-generic' matches your platformio.ini
+        run: pio run -e m5stack-dial # Make sure 'esp32-s3-generic' matches your platformio.ini
 
       - name: Create deployment files
         run: |
           # Assuming your index.html and manifest.json are in a folder named 'web'
           # If they are in the root, just use 'cp index.html deploy/'
           mkdir -p deploy
-          cp .pio/build/esp32-s3-generic/firmware.bin deploy/firmware.bin
+          cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
           cp web/index.html deploy/index.html
           cp web/manifest.json deploy/manifest.json
 
