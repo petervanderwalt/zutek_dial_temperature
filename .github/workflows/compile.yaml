@@ -39,7 +39,6 @@ jobs:
           cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
           cp .pio/build/m5stack-dial/partitions.bin deploy/partitions.bin
           cp .pio/build/m5stack-dial/bootloader.bin deploy/bootloader.bin
-          cp .pio/build/m5stack-dial/otadata.bin deploy/otadata.bin
 
       - name: Upload Artifact for Deployment
         uses: actions/upload-pages-artifact@v3
