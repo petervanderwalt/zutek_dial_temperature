@@ -27,12 +27,12 @@ jobs:
           pip install --upgrade platformio
 
       - name: Build ESP32-S3 firmware
-        run: pio run
+        run: pio run -e m5stack-dial
 
       - name: Create deployment artifact
         run: |
           mkdir -p deploy
-          cp .pio/build/esp32-s3-generic/firmware.bin deploy/firmware.bin
+          cp .pio/build/m5stack-dial/firmware.bin deploy/firmware.bin
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
