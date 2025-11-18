@@ -40,7 +40,7 @@ const int serviceMenuSize = sizeof(serviceMenuItems) / sizeof(serviceMenuItems[0
 int confirmMenuSelection = 0;
 
 // --- Password State ---
-const String correctPassword = "ABCDEF"; // Enter your New 6-character password here
+const String correctPassword = "ABCDEF";
 String enteredPassword = "";
 int passwordCharIndex = 0;
 bool showPasswordFail = false;
@@ -51,11 +51,11 @@ const int charsetSize = 36;
 
 // --- Values & State Flags
 float currentTemp = 25.0;
-float setpoint = 100.0;
-int timeSettingMinutes = 180;
+float setpoint = 120.5;
+int timeSettingMinutes = 30;
 
 bool isTestRunning = false;
-bool isPreheating = false;
+bool isPreheating = false; // This is now a general "temperature conditioning" flag
 bool startTestAfterPreheat = false;
 unsigned long testStartTime = 0;
 
@@ -104,18 +104,14 @@ void draw() {
 
 void drawMainScreen() {
     spr.fillSprite(TFT_BLACK);
-
-    // --- Setpoint (Top Center)
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
     spr.loadFont(Noto);
     char setpointBuf[32];
     sprintf(setpointBuf, "Set: %.1f C", setpoint);
     spr.drawString(setpointBuf, 120, 20);
-
-    // --- Current Temperature (Large)
     spr.setTextDatum(MC_DATUM);
-    if (isPreheating) { // Orange if waiting for temp (heating or cooling)
+    if (isPreheating) {
         spr.setTextColor(TFT_ORANGE, TFT_BLACK);
     } else {
         spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -124,8 +120,6 @@ void drawMainScreen() {
     char tempBuf[16];
     sprintf(tempBuf, "%.1f C", currentTemp);
     spr.drawString(tempBuf, 120, 80);
-
-    // --- Time Display (Large)
     char timeBuf[32];
     if (isTestRunning) {
         unsigned long elapsedMillis = millis() - testStartTime;
@@ -134,7 +128,6 @@ void drawMainScreen() {
         int hours = remainingMillis / 3600000;
         int mins = (remainingMillis / 60000) % 60;
         int secs = (remainingMillis / 1000) % 60;
-
         sprintf(timeBuf, "%02d:%02d:%02d", hours, mins, secs);
         spr.setTextColor(TFT_GREEN, TFT_BLACK);
     } else {
@@ -145,8 +138,6 @@ void drawMainScreen() {
     }
     spr.drawString(timeBuf, 120, 135);
     spr.unloadFont();
-
-    // --- Status Text (Bottom) ---
     spr.setTextDatum(BC_DATUM);
     spr.loadFont(Noto);
     char statusBuf[32];
@@ -154,11 +145,11 @@ void drawMainScreen() {
         strcpy(statusBuf, "Status: Running");
         spr.setTextColor(TFT_GREEN, TFT_BLACK);
     } else if (isPreheating) {
-        // Display correct status whether heating or cooling
+        // --- MODIFICATION ---
         if (currentTemp < setpoint) {
-            strcpy(statusBuf, "Status: Preheating...");
+            strcpy(statusBuf, "Status: Heating...");
         } else {
-            strcpy(statusBuf, "Status: Cooling Down...");
+            strcpy(statusBuf, "Status: Cooling...");
         }
         spr.setTextColor(TFT_ORANGE, TFT_BLACK);
     } else {
@@ -166,16 +157,13 @@ void drawMainScreen() {
         spr.setTextColor(TFT_WHITE, TFT_BLACK);
     }
     spr.drawString(statusBuf, 120, 200);
-
-    // --- Instructions (Bottom)
     spr.setTextColor(grays[8], TFT_BLACK);
     spr.drawString("Click to Open Menu", 120, 220);
     spr.unloadFont();
-
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawRotaryMenu(const char *title, String items[], int numItems, int selection) {
+void drawRotaryMenu(const char *title, String items[], int numItems, int selection) { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -232,10 +220,9 @@ void drawPasswordScreen() {
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
     spr.drawString("Enter Password", 120, 70);
 
-    // --- Draw 6 placeholder slots ---
     int numChars = 6;
     int blockHeight = 40;
-    int totalWidth = 180; // Increased width for 6 chars
+    int totalWidth = 180;
     int charSlotWidth = totalWidth / numChars;
     int startY = 90;
     int startX = 120 - (totalWidth / 2);
@@ -259,7 +246,7 @@ void drawPasswordScreen() {
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) {
+void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextDatum(MC_DATUM);
@@ -270,7 +257,7 @@ void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) {
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection) {
+void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection) { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -298,7 +285,7 @@ void drawConfirmationScreen(const char* title, const char* option1, const char* 
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawValueEditor(const char *title, float value, const char *unit) {
+void drawValueEditor(const char *title, float value, const char *unit) { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -319,7 +306,7 @@ void drawValueEditor(const char *title, float value, const char *unit) {
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawTimeEditor() {
+void drawTimeEditor() { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -342,7 +329,7 @@ void drawTimeEditor() {
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawLogGraph() {
+void drawLogGraph() { /* Unchanged */
     spr.fillSprite(TFT_BLACK);
     int pad = 20;
     float minVal = logData[0], maxVal = logData[0];
@@ -387,27 +374,19 @@ void loop() {
         delay(20); return;
     }
 
-    // --- Global State Updates ---
+    // --- MODIFICATION: Improved Temperature Conditioning Logic ---
+    const float TEMP_TOLERANCE = 0.5; // Degrees C
     if (isPreheating) {
-        bool tempReached = false;
-        // Handle heating
-        if (currentTemp < setpoint) {
-            currentTemp += 0.25;
-            if (currentTemp >= setpoint) {
-                currentTemp = setpoint;
-                tempReached = true;
+        // If the temperature is outside the acceptable tolerance range
+        if (abs(currentTemp - setpoint) > TEMP_TOLERANCE) {
+            if (currentTemp < setpoint) {
+                currentTemp += 0.25; // Simulate heating
+            } else {
+                currentTemp -= 0.10; // Simulate cooling (often slower)
             }
         }
-        // Handle cooling
-        else if (currentTemp > setpoint) {
-            currentTemp -= 0.25;
-            if (currentTemp <= setpoint) {
-                currentTemp = setpoint;
-                tempReached = true;
-            }
-        }
-        // If target temp is reached
-        if (tempReached) {
+        else { // Temperature has reached the setpoint
+            currentTemp = setpoint; // Snap to exact value
             isPreheating = false;
             M5Dial.Speaker.tone(4000, 200);
             if (startTestAfterPreheat) {
@@ -418,6 +397,7 @@ void loop() {
             }
         }
     }
+
     if (isTestRunning) {
         if (millis() - testStartTime >= (unsigned long)timeSettingMinutes * 60000) {
             isTestRunning = false; userMenuItems[4] = "Run Test"; M5Dial.Speaker.tone(5000, 500);
@@ -459,12 +439,14 @@ void loop() {
                     if (isTestRunning) {
                         isTestRunning = false; userMenuItems[4] = "Run Test"; currentScreen = MAIN_SCREEN;
                     } else {
-                        // If not at temp (either too hot or too cold), start the wait process
-                        if (abs(currentTemp - setpoint) > 0.1) {
+                        // --- MODIFICATION: Check if temp is within tolerance before starting test ---
+                        if (abs(currentTemp - setpoint) > TEMP_TOLERANCE) {
+                            // If not in range, start the conditioning process
                             isPreheating = true;
                             startTestAfterPreheat = true;
                             currentScreen = MAIN_SCREEN;
-                        } else { // Already at temp, go straight to confirmation
+                        } else {
+                            // If already in range, go straight to confirmation
                             currentScreen = CONFIRM_START_TEST;
                             confirmMenuSelection = 0;
                         }
@@ -473,8 +455,6 @@ void loop() {
                 oldPosition = M5Dial.Encoder.read(); draw();
             }
             break;
-
-        // ... (rest of the cases are unchanged)
 
         case SERVICE_MENU_LOGIN:
             if (encoderMoved) {
@@ -550,7 +530,7 @@ void loop() {
             }
             break;
     }
-    delay(10);
+    delay(5);
 }
 
 // =========================================================
