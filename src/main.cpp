@@ -39,8 +39,8 @@ const int serviceMenuSize = sizeof(serviceMenuItems) / sizeof(serviceMenuItems[0
 
 int confirmMenuSelection = 0;
 
-// --- Password State --- MODIFIED ---
-const String correctPassword = "ABCDEF"; // New 6-character password
+// --- Password State ---
+const String correctPassword = "ABCDEF"; // Enter your New 6-character password here
 String enteredPassword = "";
 int passwordCharIndex = 0;
 bool showPasswordFail = false;
@@ -102,16 +102,20 @@ void draw() {
     }
 }
 
-void drawMainScreen() { /* Unchanged */
+void drawMainScreen() {
     spr.fillSprite(TFT_BLACK);
+
+    // --- Setpoint (Top Center)
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
     spr.loadFont(Noto);
     char setpointBuf[32];
     sprintf(setpointBuf, "Set: %.1f C", setpoint);
     spr.drawString(setpointBuf, 120, 20);
+
+    // --- Current Temperature (Large)
     spr.setTextDatum(MC_DATUM);
-    if (isPreheating) {
+    if (isPreheating) { // Orange if waiting for temp (heating or cooling)
         spr.setTextColor(TFT_ORANGE, TFT_BLACK);
     } else {
         spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -120,6 +124,8 @@ void drawMainScreen() { /* Unchanged */
     char tempBuf[16];
     sprintf(tempBuf, "%.1f C", currentTemp);
     spr.drawString(tempBuf, 120, 80);
+
+    // --- Time Display (Large)
     char timeBuf[32];
     if (isTestRunning) {
         unsigned long elapsedMillis = millis() - testStartTime;
@@ -128,6 +134,7 @@ void drawMainScreen() { /* Unchanged */
         int hours = remainingMillis / 3600000;
         int mins = (remainingMillis / 60000) % 60;
         int secs = (remainingMillis / 1000) % 60;
+
         sprintf(timeBuf, "%02d:%02d:%02d", hours, mins, secs);
         spr.setTextColor(TFT_GREEN, TFT_BLACK);
     } else {
@@ -138,6 +145,8 @@ void drawMainScreen() { /* Unchanged */
     }
     spr.drawString(timeBuf, 120, 135);
     spr.unloadFont();
+
+    // --- Status Text (Bottom) ---
     spr.setTextDatum(BC_DATUM);
     spr.loadFont(Noto);
     char statusBuf[32];
@@ -145,20 +154,28 @@ void drawMainScreen() { /* Unchanged */
         strcpy(statusBuf, "Status: Running");
         spr.setTextColor(TFT_GREEN, TFT_BLACK);
     } else if (isPreheating) {
-        strcpy(statusBuf, "Status: Preheating...");
+        // Display correct status whether heating or cooling
+        if (currentTemp < setpoint) {
+            strcpy(statusBuf, "Status: Preheating...");
+        } else {
+            strcpy(statusBuf, "Status: Cooling Down...");
+        }
         spr.setTextColor(TFT_ORANGE, TFT_BLACK);
     } else {
         strcpy(statusBuf, "Status: Idle");
         spr.setTextColor(TFT_WHITE, TFT_BLACK);
     }
     spr.drawString(statusBuf, 120, 200);
+
+    // --- Instructions (Bottom)
     spr.setTextColor(grays[8], TFT_BLACK);
     spr.drawString("Click to Open Menu", 120, 220);
     spr.unloadFont();
+
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawRotaryMenu(const char *title, String items[], int numItems, int selection) { /* Unchanged */
+void drawRotaryMenu(const char *title, String items[], int numItems, int selection) {
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -215,7 +232,7 @@ void drawPasswordScreen() {
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
     spr.drawString("Enter Password", 120, 70);
 
-    // --- MODIFICATION: Draw 6 placeholder slots ---
+    // --- Draw 6 placeholder slots ---
     int numChars = 6;
     int blockHeight = 40;
     int totalWidth = 180; // Increased width for 6 chars
@@ -242,7 +259,7 @@ void drawPasswordScreen() {
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) { /* Unchanged */
+void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) {
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextDatum(MC_DATUM);
@@ -253,7 +270,7 @@ void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) { /* 
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection) { /* Unchanged */
+void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection) {
     spr.fillSprite(TFT_BLACK);
     spr.loadFont(Noto);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -281,7 +298,7 @@ void drawConfirmationScreen(const char* title, const char* option1, const char* 
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawValueEditor(const char *title, float value, const char *unit) { /* Unchanged */
+void drawValueEditor(const char *title, float value, const char *unit) {
     spr.fillSprite(TFT_BLACK);
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -302,7 +319,7 @@ void drawValueEditor(const char *title, float value, const char *unit) { /* Unch
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawTimeEditor() { /* Unchanged */
+void drawTimeEditor() {
     spr.fillSprite(TFT_BLACK);
     spr.setTextDatum(TC_DATUM);
     spr.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -325,7 +342,7 @@ void drawTimeEditor() { /* Unchanged */
     M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawLogGraph() { /* Unchanged */
+void drawLogGraph() {
     spr.fillSprite(TFT_BLACK);
     int pad = 20;
     float minVal = logData[0], maxVal = logData[0];
@@ -370,12 +387,34 @@ void loop() {
         delay(20); return;
     }
 
+    // --- Global State Updates ---
     if (isPreheating) {
-        if (currentTemp < setpoint) { currentTemp += 0.25; }
-        else {
-            currentTemp = setpoint; isPreheating = false; M5Dial.Speaker.tone(4000, 200);
+        bool tempReached = false;
+        // Handle heating
+        if (currentTemp < setpoint) {
+            currentTemp += 0.25;
+            if (currentTemp >= setpoint) {
+                currentTemp = setpoint;
+                tempReached = true;
+            }
+        }
+        // Handle cooling
+        else if (currentTemp > setpoint) {
+            currentTemp -= 0.25;
+            if (currentTemp <= setpoint) {
+                currentTemp = setpoint;
+                tempReached = true;
+            }
+        }
+        // If target temp is reached
+        if (tempReached) {
+            isPreheating = false;
+            M5Dial.Speaker.tone(4000, 200);
             if (startTestAfterPreheat) {
-                startTestAfterPreheat = false; currentScreen = CONFIRM_START_TEST; confirmMenuSelection = 0; draw();
+                startTestAfterPreheat = false;
+                currentScreen = CONFIRM_START_TEST;
+                confirmMenuSelection = 0;
+                draw();
             }
         }
     }
@@ -420,16 +459,22 @@ void loop() {
                     if (isTestRunning) {
                         isTestRunning = false; userMenuItems[4] = "Run Test"; currentScreen = MAIN_SCREEN;
                     } else {
-                        if (currentTemp < setpoint) {
-                            isPreheating = true; startTestAfterPreheat = true; currentScreen = MAIN_SCREEN;
-                        } else {
-                            currentScreen = CONFIRM_START_TEST; confirmMenuSelection = 0;
+                        // If not at temp (either too hot or too cold), start the wait process
+                        if (abs(currentTemp - setpoint) > 0.1) {
+                            isPreheating = true;
+                            startTestAfterPreheat = true;
+                            currentScreen = MAIN_SCREEN;
+                        } else { // Already at temp, go straight to confirmation
+                            currentScreen = CONFIRM_START_TEST;
+                            confirmMenuSelection = 0;
                         }
                     }
                 }
                 oldPosition = M5Dial.Encoder.read(); draw();
             }
             break;
+
+        // ... (rest of the cases are unchanged)
 
         case SERVICE_MENU_LOGIN:
             if (encoderMoved) {
@@ -438,7 +483,6 @@ void loop() {
             }
             if (M5Dial.BtnA.wasPressed()) {
                 enteredPassword += charset[passwordCharIndex];
-                // --- MODIFICATION: Check for 6 characters ---
                 if (enteredPassword.length() == 6) {
                     if (enteredPassword == correctPassword) {
                         currentScreen = SERVICE_MENU; serviceMenuSelection = 0;
@@ -506,7 +550,7 @@ void loop() {
             }
             break;
     }
-    delay(5);
+    delay(10);
 }
 
 // =========================================================
