@@ -51,8 +51,8 @@ const int charsetSize = 36;
 
 // --- Values & State Flags
 float currentTemp = 25.0;
-float setpoint = 120.5;
-int timeSettingMinutes = 30;
+float setpoint = 100.0;
+int timeSettingMinutes = 180;
 
 bool isTestRunning = false;
 bool isPreheating = false;
