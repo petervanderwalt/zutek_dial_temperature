@@ -1,552 +1,323 @@
-#include "M5Dial.h"
-#include "bigFont.h"
-#include "Noto.h"
-#include "smallFont.h"
-#include "Wire.h"
-#include "M5Unified.h"
-#include "M5GFX.h"
-#include <TFT_eSPI.h>
-#include <EEPROM.h>
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
+#include <Adafruit_NeoPixel.h>
+#include <Adafruit_MAX31865.h>
+#include <PID_v1.h>
+#include <Ch376msc.h>
+#include "SharedData.h"
+#include "WebPage.h"
 
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite spr = TFT_eSprite(&tft);
+// --- CONFIGURATION ---
+const char* ssid = "zutek_pid";
+const char* password = "password123";
 
-// --- Enums for State Management
-enum ScreenState {
-    MAIN_SCREEN,
-    USER_MENU,
-    SET_TEMP,
-    SET_TIME,
-    LOG_GRAPH,
-    CONFIRM_START_TEST,
-    SERVICE_MENU_LOGIN,
-    SERVICE_MENU
-};
-ScreenState currentScreen = MAIN_SCREEN;
+// --- PIN DEFINITIONS ---
+#define PIN_NEOPIXEL    48
+#define PIN_MOSFET      8
+#define PIN_SPI_MOSI    35
+#define PIN_SPI_SCK     36
+#define PIN_SPI_MISO    37
+#define PIN_CS_PT100    1
+#define PIN_CS_SD       5
+#define PIN_CS_USB      6
+#define PIN_INT_USB     7
+#define PIN_I2C_SDA     3
+#define PIN_I2C_SCL     4
 
-// --- Colors
-unsigned short zutek_red = tft.color565(160, 0, 0);
-unsigned short grays[15];
+// --- OBJECTS ---
+// UPDATED: Only 2 LEDs (0=Mainboard, 1=SSR/PT100 Board)
+Adafruit_NeoPixel strip(2, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(PIN_CS_PT100);
+Ch376msc flashDrive(PIN_CS_USB, PIN_INT_USB, SPI_SCK_KHZ(125));
+AsyncWebServer server(80);
 
-// --- Menu Variables
-int userMenuSelection = 0;
-String userMenuItems[] = {"Set Temperature", "Set Time", "Logging", "Pre-Heat", "Run Test", "Service Menu", "Back"};
-const int userMenuSize = sizeof(userMenuItems) / sizeof(userMenuItems[0]);
+// --- PID VARIABLES ---
+double pidInput, pidOutput, pidSetpoint;
+double Kp = 10.0, Ki = 0.5, Kd = 2.0;
+PID myPID(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd, DIRECT);
 
-int serviceMenuSelection = 0;
-String serviceMenuItems[] = {"Calibrate Temp", "Set PID", "Diagnostics", "Back"};
-const int serviceMenuSize = sizeof(serviceMenuItems) / sizeof(serviceMenuItems[0]);
+// --- SYSTEM STATE ---
+ControllerData sysData;
+unsigned long lastLogTime = 0;
+unsigned long lastSafetyCheck = 0;
+String currentLogFileName = "";
+int WindowSize = 1000;
+unsigned long windowStartTime;
 
-int confirmMenuSelection = 0;
+// --- SAFETY SETTINGS ---
+#define MAX_TEMP_LIMIT 150.0
+#define RUNAWAY_TIMEOUT_MS 60000
+#define MIN_RISE_PER_MIN 1.0
+float lastSafetyTemp = 0;
 
-// --- Password State ---
-const String correctPassword = "ABCDEF";
-String enteredPassword = "";
-int passwordCharIndex = 0;
-bool showPasswordFail = false;
-unsigned long passwordFailTime = 0;
-const char* charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const int charsetSize = 36;
+// --- HELPER FUNCTIONS ---
 
+void setupWiFi() {
+    WiFi.softAP(ssid, password);
+    Serial.print("AP IP Address: ");
+    Serial.println(WiFi.softAPIP());
+}
 
-// --- Values & State Flags
-float currentTemp = 25.0;
-float setpoint = 120.5;
-int timeSettingMinutes = 30;
-
-bool isTestRunning = false;
-bool isPreheating = false; // This is now a general "temperature conditioning" flag
-bool startTestAfterPreheat = false;
-unsigned long testStartTime = 0;
-
-// --- Logging Mock Data
-const int logDataPoints = 200;
-float logData[logDataPoints];
-
-#define EEPROM_SIZE 8
-const int SETPOINT_ADDR = 0;
-const int TIME_ADDR = 4;
-long oldPosition = 0;
-
-// Forward declarations
-void drawMainScreen();
-void drawRotaryMenu(const char *title, String items[], int numItems, int selection);
-void drawPasswordScreen();
-void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color);
-void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection);
-void drawValueEditor(const char *title, float value, const char *unit);
-void drawTimeEditor();
-void drawLogGraph();
-void saveSettings();
-void loadSettings();
-
-// =========================================================
-//               DRAWING FUNCTIONS
-// =========================================================
-void draw() {
-    switch (currentScreen) {
-        case MAIN_SCREEN: drawMainScreen(); break;
-        case USER_MENU: drawRotaryMenu("User Menu", userMenuItems, userMenuSize, userMenuSelection); break;
-        case SERVICE_MENU: drawRotaryMenu("Service Menu", serviceMenuItems, serviceMenuSize, serviceMenuSelection); break;
-        case SERVICE_MENU_LOGIN: drawPasswordScreen(); break;
-        case CONFIRM_START_TEST: drawConfirmationScreen("Start Test?", "Yes", "No", confirmMenuSelection); break;
-        case SET_TEMP: drawValueEditor("Set Temperature", setpoint, "C"); break;
-        case SET_TIME: drawTimeEditor(); break;
-        case LOG_GRAPH: drawLogGraph(); break;
-        default:
-            spr.fillSprite(TFT_BLACK);
-            spr.setTextDatum(MC_DATUM);
-            spr.drawString("Screen Not Implemented", 120, 120);
-            M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
+void createLogFile() {
+    if (!flashDrive.driveReady()) return;
+    int fileIndex = 1;
+    char filename[13];
+    while(true) {
+        sprintf(filename, "LOG_%03d.CSV", fileIndex);
+        if (flashDrive.openFile() == 0) {
+           flashDrive.closeFile();
+           fileIndex++;
+        } else {
+            flashDrive.setFileName(filename);
+            flashDrive.openFile();
+            char header[] = "Time_s,Setpoint_C,Temp_C,Output_PWM\n";
+            flashDrive.writeFile(header, strlen(header));
+            flashDrive.closeFile();
+            currentLogFileName = String(filename);
+            Serial.printf("[USB] New Log Created: %s\n", filename);
             break;
-    }
-}
-
-void drawMainScreen() {
-    spr.fillSprite(TFT_BLACK);
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.loadFont(Noto);
-    char setpointBuf[32];
-    sprintf(setpointBuf, "Set: %.1f C", setpoint);
-    spr.drawString(setpointBuf, 120, 20);
-    spr.setTextDatum(MC_DATUM);
-    if (isPreheating) {
-        spr.setTextColor(TFT_ORANGE, TFT_BLACK);
-    } else {
-        spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    }
-    spr.loadFont(bigFont);
-    char tempBuf[16];
-    sprintf(tempBuf, "%.1f C", currentTemp);
-    spr.drawString(tempBuf, 120, 80);
-    char timeBuf[32];
-    if (isTestRunning) {
-        unsigned long elapsedMillis = millis() - testStartTime;
-        long remainingMillis = (long)timeSettingMinutes * 60000 - elapsedMillis;
-        if (remainingMillis < 0) remainingMillis = 0;
-        int hours = remainingMillis / 3600000;
-        int mins = (remainingMillis / 60000) % 60;
-        int secs = (remainingMillis / 1000) % 60;
-        sprintf(timeBuf, "%02d:%02d:%02d", hours, mins, secs);
-        spr.setTextColor(TFT_GREEN, TFT_BLACK);
-    } else {
-        int hours = timeSettingMinutes / 60;
-        int minutes = timeSettingMinutes % 60;
-        sprintf(timeBuf, "%02d:%02d:00", hours, minutes);
-        spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    }
-    spr.drawString(timeBuf, 120, 135);
-    spr.unloadFont();
-    spr.setTextDatum(BC_DATUM);
-    spr.loadFont(Noto);
-    char statusBuf[32];
-    if (isTestRunning) {
-        strcpy(statusBuf, "Status: Running");
-        spr.setTextColor(TFT_GREEN, TFT_BLACK);
-    } else if (isPreheating) {
-        // --- MODIFICATION ---
-        if (currentTemp < setpoint) {
-            strcpy(statusBuf, "Status: Heating...");
-        } else {
-            strcpy(statusBuf, "Status: Cooling...");
         }
-        spr.setTextColor(TFT_ORANGE, TFT_BLACK);
-    } else {
-        strcpy(statusBuf, "Status: Idle");
-        spr.setTextColor(TFT_WHITE, TFT_BLACK);
+        if (fileIndex > 999) break;
     }
-    spr.drawString(statusBuf, 120, 200);
-    spr.setTextColor(grays[8], TFT_BLACK);
-    spr.drawString("Click to Open Menu", 120, 220);
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawRotaryMenu(const char *title, String items[], int numItems, int selection) { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.setTextDatum(TC_DATUM);
-    spr.drawString(title, 120, 20);
-    int centerY = 120;
-    int itemSpacing = 40;
-    for (int i = -2; i <= 2; i++) {
-        int itemIndex = selection + i;
-        if (itemIndex >= 0 && itemIndex < numItems) {
-            int yPos = centerY + (i * itemSpacing);
-            if (i == 0) {
-                spr.fillRoundRect(10, yPos - 18, 220, 36, 5, TFT_WHITE);
-                spr.setTextColor(TFT_BLACK, TFT_WHITE);
-            } else {
-                if (abs(i) == 1) {
-                    spr.setTextColor(grays[5], TFT_BLACK);
-                } else {
-                    spr.setTextColor(grays[9], TFT_BLACK);
-                }
+void logDataToUSB() {
+    if (!sysData.isLogging || sysData.errorState == 3) return;
+
+    if (flashDrive.driveReady()) {
+        char buf[64];
+        sprintf(buf, "%lu,%.2f,%.2f,%.0f\n",
+            millis()/1000, sysData.setpoint, sysData.currentTemp, sysData.output);
+
+        flashDrive.setFileName(currentLogFileName.c_str());
+        if(flashDrive.openFile() == 0) { }
+        flashDrive.moveCursor(0xFFFFFFFF);
+        flashDrive.writeFile(buf, strlen(buf));
+        flashDrive.closeFile();
+    } else {
+        sysData.errorState = 3; // USB Lost
+    }
+}
+
+void onRequest() {
+    Wire.write((uint8_t*)&sysData, sizeof(ControllerData));
+}
+
+void onReceive(int howMany) {
+    if (howMany >= sizeof(ControllerData)) {
+        ControllerData incoming;
+        Wire.readBytes((uint8_t*)&incoming, sizeof(ControllerData));
+        sysData.setpoint = incoming.setpoint;
+        sysData.isRunning = incoming.isRunning;
+        if (incoming.kp != sysData.kp || incoming.ki != sysData.ki || incoming.kd != sysData.kd) {
+            sysData.kp = incoming.kp;
+            sysData.ki = incoming.ki;
+            sysData.kd = incoming.kd;
+            myPID.SetTunings(sysData.kp, sysData.ki, sysData.kd);
+        }
+    }
+}
+
+// Helper: Safe Sensor Reading with Rate Limiting
+void checkSensor(unsigned long now) {
+    static unsigned long lastTempRead = 0;
+    static unsigned long lastErrorLog = 0;
+
+    if (now - lastTempRead > 250) {
+        lastTempRead = now;
+        uint8_t fault = thermo.readFault();
+
+        if (fault) {
+            sysData.errorState = 1; // 1 = Sensor Fault
+            sysData.isRunning = false;
+            sysData.output = 0;
+            sysData.currentTemp = 0.0;
+            thermo.clearFault();
+
+            if (now - lastErrorLog > 2000) {
+                lastErrorLog = now;
+                if (fault == 0xFF) Serial.println("[ERR] PT100 Disconnected (0xFF)");
+                else Serial.printf("[ERR] MAX31865 Fault Code: 0x%02X\n", fault);
             }
-            spr.setTextDatum(MC_DATUM);
-            spr.drawString(items[itemIndex], 120, yPos);
-        }
-    }
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-void drawPasswordScreen() {
-    spr.fillSprite(TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.setTextDatum(MC_DATUM);
-
-    int radius = 105;
-    for (int i = 0; i < charsetSize; i++) {
-        float angle = (float)i / charsetSize * 2.0 * PI - (PI / 2.0);
-        int x = 120 + radius * cos(angle);
-        int y = 120 + radius * sin(angle);
-
-        if (i == passwordCharIndex) {
-            spr.fillCircle(x, y, 15, TFT_WHITE);
-            spr.setTextColor(TFT_BLACK, TFT_WHITE);
-            spr.setTextSize(2);
-            spr.drawString(String(charset[i]), x, y);
-            spr.setTextSize(1);
         } else {
-            spr.setTextColor(TFT_WHITE, TFT_BLACK);
-            spr.drawString(String(charset[i]), x, y);
+            sysData.currentTemp = thermo.temperature(100, 430);
+            if (sysData.errorState == 1) {
+                sysData.errorState = 0;
+                Serial.println("[INF] PT100 Sensor Restored");
+            }
         }
     }
-
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.drawString("Enter Password", 120, 70);
-
-    int numChars = 6;
-    int blockHeight = 40;
-    int totalWidth = 180;
-    int charSlotWidth = totalWidth / numChars;
-    int startY = 90;
-    int startX = 120 - (totalWidth / 2);
-
-    spr.drawRect(startX, startY, totalWidth, blockHeight, TFT_WHITE);
-
-    for (int i = 1; i < numChars; i++) {
-        int lineX = startX + (i * charSlotWidth);
-        spr.drawLine(lineX, startY, lineX, startY + blockHeight, TFT_WHITE);
-    }
-
-    spr.setTextDatum(MC_DATUM);
-    for (int i = 0; i < enteredPassword.length(); i++) {
-        int charX = startX + (i * charSlotWidth) + (charSlotWidth / 2);
-        int charY = startY + (blockHeight / 2);
-        spr.setTextColor(TFT_GREEN, TFT_BLACK);
-        spr.drawString("X", charX, charY);
-    }
-
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
 }
 
-void drawMessageScreen(const char* msg1, const char* msg2, uint16_t color) { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.setTextDatum(MC_DATUM);
-    spr.setTextColor(color, TFT_BLACK);
-    spr.drawString(msg1, 120, 110);
-    spr.drawString(msg2, 120, 140);
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-void drawConfirmationScreen(const char* title, const char* option1, const char* option2, int selection) { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.setTextDatum(TC_DATUM);
-    spr.drawString(title, 120, 60);
-    if (selection == 0) {
-        spr.fillRoundRect(30, 110, 80, 40, 5, TFT_WHITE);
-        spr.setTextColor(TFT_BLACK, TFT_WHITE);
-    } else {
-        spr.drawRoundRect(30, 110, 80, 40, 5, TFT_WHITE);
-        spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    }
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString(option1, 70, 130);
-    if (selection == 1) {
-        spr.fillRoundRect(130, 110, 80, 40, 5, TFT_WHITE);
-        spr.setTextColor(TFT_BLACK, TFT_WHITE);
-    } else {
-        spr.drawRoundRect(130, 110, 80, 40, 5, TFT_WHITE);
-        spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    }
-    spr.setTextDatum(MC_DATUM);
-    spr.drawString(option2, 170, 130);
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-void drawValueEditor(const char *title, float value, const char *unit) { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.drawString(title, 120, 40);
-    spr.unloadFont();
-    spr.setTextDatum(MC_DATUM);
-    spr.loadFont(bigFont);
-    char buf[20];
-    sprintf(buf, "%.1f %s", value, unit);
-    spr.drawString(buf, 120, 120);
-    spr.unloadFont();
-    spr.setTextDatum(BC_DATUM);
-    spr.loadFont(Noto);
-    spr.setTextColor(grays[5], TFT_BLACK);
-    spr.drawString("Click to Save", 120, 210);
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-void drawTimeEditor() { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    spr.setTextDatum(TC_DATUM);
-    spr.setTextColor(TFT_WHITE, TFT_BLACK);
-    spr.loadFont(Noto);
-    spr.drawString("Set Time", 120, 40);
-    spr.unloadFont();
-    int hours = timeSettingMinutes / 60;
-    int minutes = timeSettingMinutes % 60;
-    spr.setTextDatum(MC_DATUM);
-    spr.loadFont(bigFont);
-    char buf[20];
-    sprintf(buf, "%02d:%02d", hours, minutes);
-    spr.drawString(buf, 120, 120);
-    spr.unloadFont();
-    spr.setTextDatum(BC_DATUM);
-    spr.loadFont(Noto);
-    spr.setTextColor(grays[5], TFT_BLACK);
-    spr.drawString("Click to Save", 120, 210);
-    spr.unloadFont();
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-void drawLogGraph() { /* Unchanged */
-    spr.fillSprite(TFT_BLACK);
-    int pad = 20;
-    float minVal = logData[0], maxVal = logData[0];
-    for (int i = 1; i < logDataPoints; i++) {
-        if (logData[i] < minVal) minVal = logData[i];
-        if (logData[i] > maxVal) maxVal = logData[i];
-    }
-    spr.drawLine(pad, pad, pad, 240 - pad, TFT_WHITE);
-    spr.drawLine(pad, 240 - pad, 240 - pad, 240 - pad, TFT_WHITE);
-    for (int i = 0; i < logDataPoints - 1; i++) {
-        float x1 = pad + map(i, 0, logDataPoints, 0, 240 - (2 * pad));
-        float y1 = (240 - pad) - map(logData[i], minVal, maxVal, 0, 240 - (2 * pad));
-        float x2 = pad + map(i + 1, 0, logDataPoints, 0, 240 - (2 * pad));
-        float y2 = (240 - pad) - map(logData[i + 1], minVal, maxVal, 0, 240 - (2 * pad));
-        spr.drawLine(x1, y1, x2, y2, TFT_GREEN);
-    }
-    M5Dial.Display.pushImage(0, 0, 240, 240, (uint16_t *)spr.getPointer());
-}
-
-// =========================================================
-//               SETUP & LOOP
-// =========================================================
 void setup() {
-    auto cfg = M5.config();
-    M5Dial.begin(cfg, true, true);
-    spr.createSprite(240, 240);
-    int co = 225;
-    for (int i = 0; i < 15; i++) { grays[i] = tft.color565(co, co, co); co -= 15; }
-    for (int i = 0; i < logDataPoints; i++) { logData[i] = 50.0 * sin(2.0 * PI * i / 100.0) + 100.0; }
-    loadSettings();
-    draw();
-    M5Dial.Speaker.setVolume(180);
+    Serial.begin(115200);
+
+    sysData.setpoint = 100.0;
+    sysData.kp = Kp; sysData.ki = Ki; sysData.kd = Kd;
+    sysData.isRunning = false;
+    sysData.errorState = 0;
+
+    pinMode(PIN_MOSFET, OUTPUT);
+    digitalWrite(PIN_MOSFET, LOW);
+    strip.begin(); strip.show();
+
+    SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
+    Wire.begin(I2C_ADDR_MAINBOARD, PIN_I2C_SDA, PIN_I2C_SCL, 100000);
+    Wire.onRequest(onRequest);
+    Wire.onReceive(onReceive);
+
+    thermo.begin(MAX31865_3WIRE);
+
+    flashDrive.init();
+
+    windowStartTime = millis();
+    myPID.SetOutputLimits(0, 255);
+    myPID.SetMode(AUTOMATIC);
+
+    setupWiFi();
+
+    // --- API ENDPOINTS ---
+    server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request){
+        JsonDocument doc;
+        doc["temp"] = sysData.currentTemp;
+        doc["sp"] = sysData.setpoint;
+        doc["out"] = sysData.output;
+        doc["run"] = sysData.isRunning;
+        doc["log"] = sysData.isLogging;
+        doc["err"] = sysData.errorState;
+        doc["kp"] = sysData.kp; doc["ki"] = sysData.ki; doc["kd"] = sysData.kd;
+        doc["time"] = millis()/1000;
+        String res; serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
+
+    server.on("/api/set", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("sp")) sysData.setpoint = request->getParam("sp")->value().toFloat();
+        if (request->hasParam("kp")) {
+             sysData.kp = request->getParam("kp")->value().toFloat();
+             sysData.ki = request->getParam("ki")->value().toFloat();
+             sysData.kd = request->getParam("kd")->value().toFloat();
+             myPID.SetTunings(sysData.kp, sysData.ki, sysData.kd);
+        }
+        request->send(200, "text/plain", "OK");
+    });
+
+    server.on("/api/toggle", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("run")) {
+            bool run = request->getParam("run")->value().toInt() == 1;
+            sysData.isRunning = run;
+            if (run) {
+                sysData.errorState = 0;
+                createLogFile();
+                sysData.isLogging = true;
+                sysData.testDuration = 0;
+            } else {
+                sysData.isLogging = false;
+            }
+        }
+        request->send(200, "text/plain", "OK");
+    });
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", index_html);
+        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        response->addHeader("Pragma", "no-cache");
+        response->addHeader("Expires", "0");
+        request->send(response);
+    });
+
+    server.begin();
+    Serial.println("System Ready");
 }
 
 void loop() {
-    M5Dial.update();
+    unsigned long now = millis();
 
-    if (showPasswordFail) {
-        if (millis() - passwordFailTime > 1000) {
-            showPasswordFail = false; currentScreen = MAIN_SCREEN; draw();
+    // 1. USB Maintenance
+    flashDrive.checkIntMessage();
+
+    // 2. Read Sensor Safely
+    checkSensor(now);
+
+    // 3. Safety Check
+    if (sysData.isRunning && sysData.errorState == 0 && sysData.output > 200) {
+        if (now - lastSafetyCheck > RUNAWAY_TIMEOUT_MS) {
+            lastSafetyTemp = sysData.currentTemp;
+            lastSafetyCheck = now;
         }
-        delay(20); return;
+    } else {
+        lastSafetyCheck = now;
+        lastSafetyTemp = sysData.currentTemp;
     }
 
-    // --- MODIFICATION: Improved Temperature Conditioning Logic ---
-    const float TEMP_TOLERANCE = 0.5; // Degrees C
-    if (isPreheating) {
-        // If the temperature is outside the acceptable tolerance range
-        if (abs(currentTemp - setpoint) > TEMP_TOLERANCE) {
-            if (currentTemp < setpoint) {
-                currentTemp += 0.25; // Simulate heating
-            } else {
-                currentTemp -= 0.10; // Simulate cooling (often slower)
-            }
-        }
-        else { // Temperature has reached the setpoint
-            currentTemp = setpoint; // Snap to exact value
-            isPreheating = false;
-            M5Dial.Speaker.tone(4000, 200);
-            if (startTestAfterPreheat) {
-                startTestAfterPreheat = false;
-                currentScreen = CONFIRM_START_TEST;
-                confirmMenuSelection = 0;
-                draw();
-            }
-        }
+    if (sysData.currentTemp > MAX_TEMP_LIMIT) {
+        sysData.errorState = 2; // Overheat
+        sysData.isRunning = false;
+        sysData.output = 0;
     }
 
-    if (isTestRunning) {
-        if (millis() - testStartTime >= (unsigned long)timeSettingMinutes * 60000) {
-            isTestRunning = false; userMenuItems[4] = "Run Test"; M5Dial.Speaker.tone(5000, 500);
+    // 4. PID Loop
+    if (sysData.isRunning && sysData.errorState == 0) {
+        pidInput = sysData.currentTemp;
+        pidSetpoint = sysData.setpoint;
+        myPID.Compute();
+        sysData.output = pidOutput;
+    } else {
+        sysData.output = 0;
+    }
+
+    // 5. SSR Control
+    unsigned long timeInWindow = now - windowStartTime;
+    if (timeInWindow > WindowSize) {
+        windowStartTime += WindowSize;
+        timeInWindow = 0;
+    }
+    double onDuration = 0;
+    if (sysData.errorState == 0) onDuration = (sysData.output / 255.0) * WindowSize;
+    if (onDuration > timeInWindow) digitalWrite(PIN_MOSFET, HIGH);
+    else digitalWrite(PIN_MOSFET, LOW);
+
+    // 6. Logging & LEDs
+    if (now - lastLogTime > 1000) {
+        lastLogTime = now;
+        if (sysData.isRunning) {
+            sysData.testDuration++;
+            logDataToUSB();
         }
+
+        // --- LED CONTROL ---
+
+        // PIXEL 0: Mainboard (System Status / USB Error)
+        if (sysData.errorState == 3) {
+            // USB Error -> Blink Magenta
+            if ((now / 500) % 2 == 0) strip.setPixelColor(0, strip.Color(255, 0, 255));
+            else strip.setPixelColor(0, 0);
+        } else {
+            // Normal Operation -> Heartbeat Blue
+            int b = (sin(now/500.0)+1)*60;
+            strip.setPixelColor(0, strip.Color(0, 0, b));
+        }
+
+        // PIXEL 1: PT100/SSR Board (Heat / Sensor Error)
+        if (sysData.errorState == 1) {
+            // Sensor Fail -> Blink Orange
+            if ((now / 500) % 2 == 0) strip.setPixelColor(1, strip.Color(255, 100, 0));
+            else strip.setPixelColor(1, 0);
+        }
+        else if (sysData.errorState == 2) {
+            // Overheat -> Solid Red
+            strip.setPixelColor(1, strip.Color(255, 0, 0));
+        }
+        else {
+            // Normal -> Show Heater Intensity (Red)
+            int r = (int)sysData.output;
+            strip.setPixelColor(1, strip.Color(r, 0, 0));
+        }
+
+        strip.show();
     }
-
-    if (currentScreen == MAIN_SCREEN) { draw(); }
-
-    long newPosition = M5Dial.Encoder.read();
-    bool encoderMoved = abs(newPosition - oldPosition) >= 4;
-    int encoderDir = (newPosition > oldPosition) ? 1 : -1;
-
-    switch (currentScreen) {
-        case MAIN_SCREEN:
-            if (M5Dial.BtnA.wasPressed()) {
-                currentScreen = USER_MENU; userMenuSelection = 0; draw();
-            }
-            break;
-
-        case USER_MENU:
-            if (encoderMoved) {
-                int newSelection = userMenuSelection + encoderDir;
-                userMenuSelection = constrain(newSelection, 0, userMenuSize - 1);
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                String selection = userMenuItems[userMenuSelection];
-                if (selection == "Back") { currentScreen = MAIN_SCREEN; }
-                else if (selection == "Set Temperature") { currentScreen = SET_TEMP; }
-                else if (selection == "Set Time") { currentScreen = SET_TIME; }
-                else if (selection == "Logging") { currentScreen = LOG_GRAPH; }
-                else if (selection == "Pre-Heat") {
-                    startTestAfterPreheat = false; isPreheating = true; currentScreen = MAIN_SCREEN;
-                }
-                else if (selection == "Service Menu") {
-                    enteredPassword = ""; passwordCharIndex = 0; currentScreen = SERVICE_MENU_LOGIN;
-                }
-                else if (userMenuItems[userMenuSelection] == "Run Test" || userMenuItems[userMenuSelection] == "Stop Test") {
-                    if (isTestRunning) {
-                        isTestRunning = false; userMenuItems[4] = "Run Test"; currentScreen = MAIN_SCREEN;
-                    } else {
-                        // --- MODIFICATION: Check if temp is within tolerance before starting test ---
-                        if (abs(currentTemp - setpoint) > TEMP_TOLERANCE) {
-                            // If not in range, start the conditioning process
-                            isPreheating = true;
-                            startTestAfterPreheat = true;
-                            currentScreen = MAIN_SCREEN;
-                        } else {
-                            // If already in range, go straight to confirmation
-                            currentScreen = CONFIRM_START_TEST;
-                            confirmMenuSelection = 0;
-                        }
-                    }
-                }
-                oldPosition = M5Dial.Encoder.read(); draw();
-            }
-            break;
-
-        case SERVICE_MENU_LOGIN:
-            if (encoderMoved) {
-                passwordCharIndex = (passwordCharIndex + encoderDir + charsetSize) % charsetSize;
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                enteredPassword += charset[passwordCharIndex];
-                if (enteredPassword.length() == 6) {
-                    if (enteredPassword == correctPassword) {
-                        currentScreen = SERVICE_MENU; serviceMenuSelection = 0;
-                    } else {
-                        showPasswordFail = true; passwordFailTime = millis();
-                        drawMessageScreen("Password Incorrect", "", TFT_RED);
-                        return;
-                    }
-                }
-                draw();
-            }
-            break;
-
-        case SERVICE_MENU:
-            if (encoderMoved) {
-                int newSelection = serviceMenuSelection + encoderDir;
-                serviceMenuSelection = constrain(newSelection, 0, serviceMenuSize - 1);
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                if (serviceMenuItems[serviceMenuSelection] == "Back") {
-                    currentScreen = USER_MENU;
-                }
-                draw();
-            }
-            break;
-
-        case CONFIRM_START_TEST:
-            if (encoderMoved) {
-                confirmMenuSelection = (confirmMenuSelection + encoderDir + 2) % 2;
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                if (confirmMenuSelection == 0) {
-                    isTestRunning = true; testStartTime = millis(); userMenuItems[4] = "Stop Test";
-                }
-                currentScreen = MAIN_SCREEN; draw();
-            }
-            break;
-
-        case SET_TEMP:
-            if (encoderMoved) {
-                setpoint += 0.5 * encoderDir; setpoint = constrain(setpoint, 0, 999.9);
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                saveSettings(); currentScreen = USER_MENU; draw();
-            }
-            break;
-
-        case SET_TIME:
-            if (encoderMoved) {
-                timeSettingMinutes += 1 * encoderDir;
-                timeSettingMinutes = constrain(timeSettingMinutes, 0, (23 * 60 + 59));
-                oldPosition = newPosition; draw();
-            }
-            if (M5Dial.BtnA.wasPressed()) {
-                saveSettings(); currentScreen = USER_MENU; draw();
-            }
-            break;
-
-        case LOG_GRAPH:
-             if (M5Dial.BtnA.wasPressed()) {
-                currentScreen = USER_MENU; draw();
-            }
-            break;
-    }
-    delay(5);
-}
-
-// =========================================================
-//               HELPER FUNCTIONS
-// =========================================================
-void saveSettings() {
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.put(SETPOINT_ADDR, setpoint);
-    EEPROM.put(TIME_ADDR, timeSettingMinutes);
-    EEPROM.commit();
-}
-
-void loadSettings() {
-    EEPROM.begin(EEPROM_SIZE);
-    EEPROM.get(SETPOINT_ADDR, setpoint);
-    EEPROM.get(TIME_ADDR, timeSettingMinutes);
-    if (isnan(setpoint) || setpoint < 0 || setpoint > 999.9) setpoint = 120.0;
-    if (timeSettingMinutes < 0 || timeSettingMinutes > (24*60)) timeSettingMinutes = 30;
 }
