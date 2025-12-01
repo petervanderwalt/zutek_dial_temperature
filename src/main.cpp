@@ -22,8 +22,8 @@ struct ControllerData {
     float kp;
     float ki;
     float kd;
-    bool isRunning;
-    bool isLogging;
+    uint8_t isRunning;   // CHANGED: bool -> uint8_t (0=Off, 1=On)
+    uint8_t isLogging;   // CHANGED: bool -> uint8_t (0=Off, 1=On)
     uint8_t errorState;
     uint32_t testDuration;
 };
@@ -247,15 +247,15 @@ void loop() {
             }
             break;
 
-        case CONFIRM_START_TEST:
+       case CONFIRM_START_TEST:
             if (encoderMoved) {
                 confirmMenuSelection = (confirmMenuSelection + encoderDir + 2) % 2;
                 oldPosition = newPosition;
                 drawConfirmationScreen("Start Test?", "Yes", "No", confirmMenuSelection);
             }
             if (M5Dial.BtnA.wasPressed()) {
-                if (confirmMenuSelection == 0) {
-                    data.isRunning = true;
+                if (confirmMenuSelection == 0) { // YES selected
+                    data.isRunning = 1; // Explicitly set to 1
                     sendToController();
                 }
                 currentScreen = MAIN_SCREEN;
