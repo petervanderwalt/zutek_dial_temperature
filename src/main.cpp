@@ -14,6 +14,7 @@ TFT_eSprite spr = TFT_eSprite(&tft);
 // --- I2C / SHARED DATA ---
 #define I2C_ADDR_MAINBOARD 0x42
 
+#pragma pack(push, 1)
 struct ControllerData {
     float currentTemp;
     float setpoint;
@@ -26,6 +27,7 @@ struct ControllerData {
     uint8_t errorState;
     uint32_t testDuration;
 };
+#pragma pack(pop)
 
 ControllerData data;
 bool i2cConnected = false;
