@@ -97,7 +97,7 @@ void setup() {
     spr.createSprite(240, 240);
 
     // Init I2C (Master) - M5Dial Internal I2C is usually 13/14
-    Wire.begin(13, 14);
+    Wire.begin(13, 15);
 
     int co = 225;
     for (int i = 0; i < 15; i++) { grays[i] = tft.color565(co, co, co); co -= 15; }
