@@ -1,0 +1,59 @@
+name: Build and Deploy Firmware
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Build Firmware
+        # Matches [env:esp32-s3-devkitc-1] in your platformio.ini
+        run: pio run -e esp32-s3-devkitc-1
+
+      - name: Prepare Deployment Directory
+        run: |
+          mkdir -p deploy
+
+          # 1. Copy the Web Interface files
+          cp web/index.html deploy/index.html
+          cp web/manifest.json deploy/manifest.json
+
+          # 2. Copy the Firmware Binaries
+          # Note: The folder name inside .pio/build/ matches the environment name
+          cp .pio/build/esp32-s3-devkitc-1/firmware.bin deploy/firmware.bin
+          cp .pio/build/esp32-s3-devkitc-1/partitions.bin deploy/partitions.bin
+          cp .pio/build/esp32-s3-devkitc-1/bootloader.bin deploy/bootloader.bin
+
+      - name: Upload Artifact for Deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'deploy'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
